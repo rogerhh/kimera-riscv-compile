@@ -1,0 +1,113 @@
+2023/05/26
+Roger: 
+    - Started AWS Instance
+    - root password: ubuntu
+    - Cloned Roger's nvim and tmux setups (Hopefully this doesn't interfere with Seah's preferences)
+    - Installed Miniforge3: 
+        - $ wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+        - Installed conda-lock
+        
+    - Cloned chipyard
+        - Ran $ ./build-setup.sh riscv-tools, failed with sudo: yum: command not found at the end
+        - Fixed $ ./build-setup.sh -s 6 -s 7 riscv-tools, to skip firesim stuff
+
+    - For some reason riscv64-unknown-elf-gcc was not installed as part of the chipyard setup, so I installed it separately
+        - $ sudo apt install gcc-riscv64-unknown-elf
+
+2023/05/27
+Roger:
+    - Copied over Roger's Kimera install scripts (Need to push to github)
+    - Installed gtsam w/ boost (maybe need to get Kimera working without boost)
+    - Installed and compiled opencv. (Needed to increase local storage to 50GB)
+    - Fixed install scripts and installed all
+
+    - Tested CMake cross compilation with riscv-scratchpad. Must set the -fPIC flag
+    - Tested Compiling DBoW2 to RISC-V. Just need to set -DCMAKE_TOOLCHAIN_FILE=riscv.cmake when first running cmake .. Failed when referencing shared library in opencv.
+
+2023/05/29
+Roger:
+    - Trying to compile opencv's sources to riscv
+        - /usr/lib/cmake/vtk-6.3/UseVTK.cmake
+        - /usr/lib/x86_64-linux-gnu/cmake/gflags
+        - /usr/lib/x86_64-linux-gnu/libz.so     (ver 1.2.11)
+        - /usr/lib/x86_64-linux-gnu/libjpeg.so  (ver )
+        - /usr/lib/x86_64-linux-gnu/libwebp.so  (ver encoder: 0x020e)
+        - /usr/lib/x86_64-linux-gnu/libpng.so   (ver 1.6.37)
+        - /usr/lib/x86_64-linux-gnu/libtiff.so  (ver 42 - 4.1.0)
+
+        # Note: I think some or all of them are not needed for Kimera, maybe we can find a way to disable them?
+
+    VTK: Let's try to skip this as we do not need visualization
+    - Fixed g++ version extraction in vtk6-release/CMakeLists.txt
+
+2023/05/30
+Roger:
+    - Found a good example for cross compilation: https://kubasejdak.com/how-to-cross-compile-for-embedded-with-cmake-like-a-champ
+    - Error while running $ cmake -DCMAKE_TOOLCHAIN_FILE=riscv.make ..
+        - ld: cannot find -lgcc, -lm, -lc etc.
+        - Fix: $ conda activate /home/ubuntu/chipyard/.conda-env
+    - Error while running cmake
+        - export called with target "opencv_core" which requires target "zlib" that is not in any export set
+        - According to https://stackoverflow.com/questions/5378528/install-export-problem-for-library-with-dependencies, we are exporting a static library while linking a shared library
+        - Fix: run $ cmake -DWITH_JPEG=OFF -DWITH_PNG=OFF -DWITH_WEBP=OFF -DWITH_TIFF=OFF -DWITH_JASPER=OFF -DWITH_OPENEXR=OFF 
+        - Did not fix zlib error as zlib is required. libprotobuf might also be required
+
+2023/06/02
+Roger:
+    - Cloned zlib source code
+    - zlib wrote their CMakeLists.txt file wrong (lines 11-15), so CMAKE_INSTALL_PREFIX cannot be set manually
+    - Actually, opencv includes the source file for zlib and everything else, so we can just build from source. Only need to set -DBUILD_SHARED_LIBS=OFF
+    - cmake .. now works
+    - Error while compiling: INT_MAX was not declared in this scope
+        - Fix: #include <limits.h> in message_lite.cc 
+    - Error while compiling: No suitable threading library available in protobuf
+        - No fix yet. Asking Sagar if it's possible to compile protobuf without pthreads
+        - New probable cause. It seems like when we're compiling in RISCV, the UNIX flag is not set. I.e, cmake doesn't think our machine is UNIX
+        - Fix: Set CMAKE_SYSTEM_NAME=Linux, also need to fix riscv.cmake to set CMAKE_SYSTEM_NAME
+    - Error while compiling: std::round has not been declared in Eigen
+        - We can either not use eigen in opencv or compiler Eigen from source
+        - In opencv/cmake/OpenCVFindLibsPerf.cmake, it seems like opencv uses eigen from /usr/lib
+        - Seems like eigen's source code is all in the .h files though
+    - Error while running cmake: Crosscompiler does not compiler the test program. -rdynamic not recognized by riscv g++
+        - Problem: We are setting the compiler id to GNU, which runs Linux-GNU.cmake, which sets CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS -rdynamic. Need a way to set compiler id. Or just ignore the test compile
+        - The standard solution should be to set the CMAKE_TRY_COMPILER_TARGET_TYPE variable
+        - Or better yet, set CMAKE_SYSTEM_NAME to Linux, but hack opencv to HAVE_PTHREADS
+
+2023/06/04
+Roger:
+    - Set HAVE_PTHREAD=1 manually and CMAKE_SYSTEM_NAME=Generic
+    - Compile error: protobuf/stubs/common.cc pthread_mutex errors 
+        - Problem: We are sourcing chipyard/.conda-env/riscv-tools/riscv64-unknown-elf/include/pthread.h and _POSIX_THREADS is not defined
+
+2023/06/05
+Roger:
+    - Abe help: We need to use riscv64-unknown-linux-gnu instead of riscv64-unknown-elf as our cross compiler. (Thanks Abe!)
+    - We can probably set the toolchain file to be Linux GNU
+    - Revert back to using /usr/include/eigen3 in OpenCV. Reverted all changes to opencv/cmake/OpenCVFindLibsPerf.cmake
+    - Problem while compiling: zlib.h: No such file or directory
+        - Fix: Install zlib in dependencies/local
+        - Need to add dependencies local to include path
+        - Wait, but zlib is already 3rd party
+        - Fix: ocv_include_directories("/home/ubuntu/dependencies/local") somewhere in the CMake file
+    - Error while compiling: In persistence.cpp: Comparing result of pointer addition and NULL
+        - Fix: Cast pointer addition to size_t
+    - Error while linking: cannot find -lgtk-3, -lgkd-3, -lpangocairo-1.0 -lpango-1.0 -lharfbuzz -latk-1.0 -lcairo-gobject -lcairo -lgdk_pixbuf -gio-2.0 -lgobject-2.0 -lglib-2.0 -lgthread-2.0
+        - Fix: -DWITH_GTK=OFF
+    - Current working CMake command: cmake -DCMAKE_INSTALL_PREFIX=/home/ubuntu/dependencies/local -DCMAKE_TOOLCHAIN_FILE=/home/ubuntu/dependencies/riscv.cmake -DBUILD_SHARED_LIB=OFF -DWITH_JPEG=OFF -DWITH_PNG=OFF -DWITH_WEBP=OFF -DWITH_TIFF=OFF -DWITH_JASPER=OFF -DWITH_OPENEXR=OFF -DWITH_GTK=OFF  ..
+
+2023/06/06
+Roger:
+    - OpenCV now compiles
+    - Compiling DBoW2
+    - -DOpenCV_DIR=/home/ubuntu/dependencies/local/share/OpenCV
+    - Problem: Seems like it's not building a static library
+        - Fix: Should set LIB_SHARED to STATIC
+    - DBoW2 now compiles
+    - Compiling gtsam
+        - Problem: Boost is again a problem
+
+
+
+
+
+TODO: Try to compile everything into a static library
