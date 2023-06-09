@@ -3,8 +3,7 @@ Roger:
     - Started AWS Instance
     - root password: ubuntu
     - Cloned Roger's nvim and tmux setups (Hopefully this doesn't interfere with Seah's preferences)
-    - Installed Miniforge3: 
-        - $ wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+    - Installed Miniforge3: - $ wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
         - Installed conda-lock
         
     - Cloned chipyard
@@ -105,6 +104,93 @@ Roger:
     - DBoW2 now compiles
     - Compiling gtsam
         - Problem: Boost is again a problem
+        - Fix: Compile boost: https://github.com/sizhuo-zhang/boost_1_62_0
+        - Add include_directories("/home/ubuntu/dependencies/local") somewhere in the CMakefile
+    - Error while compiling: error: '-march=native': ISA string must begin with rv32 or rv64
+        - Problem, seems like march=native flag is wrong. See https://five-embeddev.com/toolchain/2019/06/26/gcc-targets/
+        - Problem, it seems like cmake/GtsamBuildTypes.cmake explicitly set march=native
+        - Fix: Set -DGTSAM_BUILD_WITH_MARCH_NATIVE=OFF -DBUILD_SHARED_LIBS=OFF
+    - Finished compiling gtsam
+
+    - Compiling OpenGV
+    - Error while compiling: error: '-march=native': ISA string must begin with rv32 or rv64
+        - Problem: opengv/CMakeLists.txt
+        - Fix: set -march=rv64imafd
+    - Problem while compiling: make -j4 hangs
+        - Fix: Just be patient lol
+    - Error while linking: 
+        /home/ubuntu/chipyard/.conda-env/riscv-tools/bin/../lib/gcc/riscv64-unknown-linux-gnu/12.2.0/../../../../riscv64-unknown-linux-gnu/bin/ld: warning: cannot find entry symbol _start; defaulting to 0000000000031e20
+        - Fix: Set -DBUILD_TESTS=OFF
+
+2023/06/08
+Roger:
+    - Compiling Kimera-RPGO
+    - Error while compiling: error: '-march=native': ISA string must begin with rv32 or rv64
+        - Problem: we are not sourcing the correct GTSAM, which sets march=native
+        - Fix: find_package(GTSAM) and find_package(GTSAM_UNSTABLE) with NO_DEFAULT_PATH
+    - Error while linking: /home/ubuntu/chipyard/.conda-env/riscv-tools/bin/../lib/gcc/riscv64-unknown-linux-gnu/12.2.0/../../../../riscv64-unknown-linux-gnu/bin/ld: /home/ubuntu/dependencies/local/lib/libboost_serialization.a(basic_oserializer.o): relocation R_RISCV_HI20 against `_ZTVN5boost7archive6detail17basic_oserializerE' can not be used when making a shared object; recompile with -fPIC
+        - Problem: Kimera-RPGO's CMakeLists.txt specifies that it is to be build a SHARED library
+        - Fix: Add check to see if BUILD_SHARED_LIBS is ON
+    - Error while linking: /home/ubuntu/chipyard/.conda-env/riscv-tools/bin/../lib/gcc/riscv64-unknown-linux-gnu/12.2.0/../../../../riscv64-unknown-linux-gnu/bin/ld: warning: cannot find entry symbol _start; defaulting to 000000000003cd90
+        - Problem: Seems like -nostartfiles is breaking things
+        - Fix: Remove -nostartfiles flag in riscv.cmake
+    - Kimera-RPGO Done
+
+    - Compiling Kimera-VIO
+    - Kimera-VIO requires gflags and glog
+
+    - Download gflags2.2: https://github.com/gflags/gflags/archive/refs/tags/v2.2.2.zip
+    - Compile gflags: cmake -DCMAKE_TOOLCHAIN_FILE=/home/ubuntu/dependencies/riscv.cmake -DCMAKE_INSTALL_PREFIX=/home/ubuntu/dependencies/local -DBUILD_SHARED_LIBS=OFF -DINSTALL_SHARED_LIBS=OFF ..
+    - Finish compiling gflags
+
+    - Download glog0.3.5: https://github.com/google/glog/archive/refs/tags/v0.3.5.zip
+    - Error while compiling: /home/ubuntu/dependencies/glog/src/googletest.h:586:35: error: ISO C++17 does not allow dynamic exception specifications
+  586 | void* operator new[](size_t size) throw(std::bad_alloc) {
+        - Problem: seems like c++17 is specified somewhere 
+        - Fix: cmake -DCMAKE_TOOLCHAIN_FILE=/home/ubuntu/dependencies/riscv.cmake -DCMAKE_INSTALL_PREFIX=/home/ubuntu/dependencies/local -DBUILD_SHARED_LIBS=OFF -DINSTALL_SHARED_LIBS=OFF -DCMAKE_CXX_STANDARD=11 ..
+    - Finish compiling gflags
+
+    - Compiling Kimera-VIO
+    - Add option to build static lib with BUILD_SHARED_LIBS=OFF
+    - Force find_package path
+    - Disable march=native flag
+    - Error while compiling: error: '-march=native': ISA string must begin with rv32 or rv64
+        - Problem: KimeraRPGOConfig.cmake find_package(GTSMA_UNSTABLE) does not force a path, so it's sourcing from /usr/local/lib
+        - KimeraRPGOConfig.cmake is configured from Kimera-RPGO/cmake/KimeraRPGOConfig.cmake.in
+        - Fix: Change Kimera-RPGO/cmake/KimeraRPGOConfig.cmake.in to have NO_DEFAULT_PATH
+
+    - Error while compiling: 23 | #include <opencv2/viz/types.hpp>  // Just for color type.
+        - Problem: OpenCV is not compiled with the VTK library so there is no viz
+        - Can we disable viz in Kimera-VIO?
+
+    - Download VTK: https://gitlab.kitware.com/vtk/vtk.git
+    - git checkout tags/v6.3.0
+    - Error while running cmake: Could not find a package configuration file provided by "VTKCompileTools" with any of the following names: VTKCompileToolsConfig.cmake vtkcompiletools-config.cmake
+        - Seems like we're missing a file called vtkcompiletools-config.cmake. There is such a file in the master branch but not in the v6.3.0 branch
+        - Correction, looking at the CMakeLists.txt file in v6.3.0, there is an option VTK_BUILD_COMPILE_TOOLS_ONLY option that seems to export a file VTKCompileTools.cmake file
+        - Run cmake first with VTK_BUILD_COMPILE_TOOLS_ONLY=ON: cmake -DCMAKE_INSTALL_FREFIX=/home/ubuntu/dependencies/local -DVTK_BUILD_COMPILE_TOOLS_ONLY=ON .. && make -j4 install
+        - Then delete build folder and mkdir build
+        - Run cmake again
+    - Error while running cmake: 
+
+        /home/ubuntu/dependencies/vtk6.3/CMake/vtkModule.cmake(4684):  if(NOT ${_vtk_find_package_PACKAGE}_FOUND )
+        /home/ubuntu/dependencies/vtk6.3/CMake/vtkModule.cmake(4685):  message(FATAL_ERROR Could not find the ${_vtk_find_package_PACKAGE} external dependency. )
+        CMake Error at CMake/vtkModule.cmake:4685 (message):
+          Could not find the OpenGL external dependency.
+        Call Stack (most recent call first):
+          CMake/vtkModule.cmake:5285 (vtk_module_find_package)
+          Utilities/OpenGL/CMakeLists.txt:58 (vtk_module_third_party_external)
+
+    - VTK seems to depend on a lot of things, maybe it's easier to just modify Kimera
+        include/kimera-vio/mesh/MeshUtils.h
+        include/kimera-vio/mesh/Mesh.h
+        include/kimera-vio/visualizer/Display-definitions.h
+        include/kimera-vio/visualizer/Visualizer3D-definitions.h
+        include/kimera-vio/visualizer/OpenCvVisualizer3D.h
+        src/visualizer/OpenCvVisualizer3D.cpp
+
+    - We should disable mesher and visualizer completely
+    
 
 
 
